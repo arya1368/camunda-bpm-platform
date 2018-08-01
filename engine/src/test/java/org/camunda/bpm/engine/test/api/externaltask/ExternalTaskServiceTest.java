@@ -1866,7 +1866,7 @@ public class ExternalTaskServiceTest extends PluggableProcessEngineTestCase {
   public void testHandleBpmnErrorPassVariablesBoundryEvent() {
     //given
     ProcessInstance pi = runtimeService.startProcessInstanceByKey("twoExternalTaskProcess");
-    // when
+
     List<LockedExternalTask> externalTasks = externalTaskService.fetchAndLock(1, WORKER_ID)
       .topic(TOPIC_NAME, LOCK_TIME)
       .execute();
@@ -1878,12 +1878,14 @@ public class ExternalTaskServiceTest extends PluggableProcessEngineTestCase {
     variables.put("foo", "bar");
     variables.put("transientVar", Variables.integerValue(1, true));
 
-    externalTaskService.handleBpmnError(externalTasks.get(0).getId(), WORKER_ID, "ERROR-OCCURED", variables);
+    // when
+    externalTaskService.handleBpmnError(externalTasks.get(0).getId(), WORKER_ID, "ERROR-OCCURED", null, variables);
 
     externalTasks = externalTaskService.fetchAndLock(1, WORKER_ID)
       .topic(TOPIC_NAME, LOCK_TIME)
       .execute();
 
+    // then
     assertEquals(0, externalTasks.size());
     assertEquals(0, externalTaskService.createExternalTaskQuery().count());
     Task afterBpmnError = taskService.createTaskQuery().singleResult();
@@ -1892,7 +1894,6 @@ public class ExternalTaskServiceTest extends PluggableProcessEngineTestCase {
     List<VariableInstance> list = runtimeService.createVariableInstanceQuery().processInstanceIdIn(pi.getId()).list();
     assertEquals(1, list.size());
     assertEquals("foo", list.get(0).getName());
-    list.get(0).getActivityInstanceId();
   }
 
   public void testHandleBpmnErrorPassVariablesEventSubProcess() {
@@ -1911,7 +1912,8 @@ public class ExternalTaskServiceTest extends PluggableProcessEngineTestCase {
           .id("eventSubProcess")
           .triggerByEvent()
           .embeddedSubProcess()
-            .startEvent("eventSubProcessStart").error()
+            .startEvent("eventSubProcessStart")
+                .error("ERROR-SPEC-10")
             .userTask("afterBpmnError")
             .endEvent()
           .subProcessDone()
@@ -1923,7 +1925,6 @@ public class ExternalTaskServiceTest extends PluggableProcessEngineTestCase {
 
     ProcessInstance pi = runtimeService.startProcessInstanceByKey("process");
 
-    // when
     List<LockedExternalTask> externalTasks = externalTaskService.fetchAndLock(1, WORKER_ID)
       .topic(TOPIC_NAME, LOCK_TIME)
       .execute();
@@ -1935,7 +1936,8 @@ public class ExternalTaskServiceTest extends PluggableProcessEngineTestCase {
     variables.put("foo", "bar");
     variables.put("transientVar", Variables.integerValue(1, true));
 
-    externalTaskService.handleBpmnError(externalTasks.get(0).getId(), WORKER_ID, "ERROR-OCCURED", variables);
+    // when
+    externalTaskService.handleBpmnError(externalTasks.get(0).getId(), WORKER_ID, "ERROR-SPEC-10", null, variables);
 
     externalTasks = externalTaskService.fetchAndLock(1, WORKER_ID)
       .topic(TOPIC_NAME, LOCK_TIME)
@@ -1950,7 +1952,38 @@ public class ExternalTaskServiceTest extends PluggableProcessEngineTestCase {
     List<VariableInstance> list = runtimeService.createVariableInstanceQuery().processInstanceIdIn(pi.getId()).list();
     assertEquals(1, list.size());
     assertEquals("foo", list.get(0).getName());
-    list.get(0).getActivityInstanceId();
+  }
+
+  @Deployment
+  public void testHandleBpmnErrorPassMessageEventSubProcess() {
+    //given
+    ProcessInstance pi = runtimeService.startProcessInstanceByKey("oneExternalTaskProcess");
+
+    List<LockedExternalTask> externalTasks = externalTaskService.fetchAndLock(1, WORKER_ID)
+      .topic(TOPIC_NAME, LOCK_TIME)
+      .execute();
+
+    // and the lock expires without the task being reclaimed
+    ClockUtil.setCurrentTime(new DateTime(ClockUtil.getCurrentTime()).plus(LOCK_TIME * 2).toDate());
+
+    // when
+    String anErrorMessage = "Some meaningful message";
+    externalTaskService.handleBpmnError(externalTasks.get(0).getId(), WORKER_ID, "ERROR-SPEC-10", anErrorMessage);
+
+    externalTasks = externalTaskService.fetchAndLock(1, WORKER_ID)
+      .topic(TOPIC_NAME, LOCK_TIME)
+      .execute();
+
+    // then
+    assertEquals(0, externalTasks.size());
+    assertEquals(0, externalTaskService.createExternalTaskQuery().count());
+    Task afterBpmnError = taskService.createTaskQuery().singleResult();
+    assertNotNull(afterBpmnError);
+    assertEquals(afterBpmnError.getTaskDefinitionKey(), "afterBpmnError");
+    List<VariableInstance> list = runtimeService.createVariableInstanceQuery().processInstanceIdIn(pi.getId()).list();
+    assertEquals(1, list.size());
+    assertEquals("errorMessageVariable", list.get(0).getName());
+    assertEquals(anErrorMessage, list.get(0).getValue());
   }
 
   @Deployment(resources = "org/camunda/bpm/engine/test/api/externaltask/twoExternalTaskProcess.bpmn20.xml")
